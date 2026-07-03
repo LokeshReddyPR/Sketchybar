@@ -12,6 +12,9 @@ local query_workspaces =
 -- Root is used to handle event subscriptions
 local root = sbar.add("item", { drawing = false })
 
+-- Custom event fired by aerospace move/join keybindings for instant reordering
+sbar.add("event", "window_moved")
+
 local numbers = {} -- workspace_index -> number item ("N:")
 local app_pool = {} -- workspace_index -> { app icon item, ... } (fixed pool)
 local brackets = {} -- workspace_index -> bracket item (the pill border)
@@ -25,63 +28,132 @@ local number_state = {} -- workspace_index -> signature string
 local app_state = {} -- workspace_index -> { k -> signature string ("off" when hidden) }
 local bracket_state = {} -- workspace_index -> bool (drawing)
 local spacer_state = {} -- workspace_index -> bool (drawing)
+local order_cache = {} -- workspace_index -> last app order (kept while hidden)
 
 local function withWindows(f)
-	local open_windows = {}
 	-- Include the window ID in the query so we can track unique windows
 	local get_windows = "aerospace list-windows --monitor all --format '%{workspace}%{app-name}%{window-id}' --json"
 	local query_visible_workspaces =
 		"aerospace list-workspaces --visible --monitor all --format '%{workspace}%{monitor-appkit-nsscreen-screens-id}' --json"
 	local get_focus_workspaces = "aerospace list-workspaces --focused"
 	local get_focused_window = "aerospace list-windows --focused --format '%{app-name}' --json"
+	-- Prints on-screen window positions as JSON: [{"id":..,"x":..,"y":..}, ...]
+	local get_positions = "$CONFIG_DIR/helpers/window_positions/bin/window_positions"
+
 	sbar.exec(get_windows, function(workspace_and_windows)
-		-- Use a set to track unique window IDs
-		local processed_windows = {}
-
+		-- Collect all unique windows per workspace, preserving discovery order
+		local raw = {} -- workspace -> { { app=, id=, idx= }, ... }
+		local seen_window = {}
 		for _, entry in ipairs(workspace_and_windows) do
-			local workspace_index = entry.workspace
-			local app = entry["app-name"]
-			local window_id = entry["window-id"]
-
-			-- Only process each window ID once
-			if not processed_windows[window_id] then
-				processed_windows[window_id] = true
-
-				if open_windows[workspace_index] == nil then
-					open_windows[workspace_index] = {}
+			local ws = entry.workspace
+			local id = entry["window-id"]
+			if not seen_window[id] then
+				seen_window[id] = true
+				if raw[ws] == nil then
+					raw[ws] = {}
 				end
-
-				-- Check if this app is already in the list for this workspace
-				local app_exists = false
-				for _, existing_app in ipairs(open_windows[workspace_index]) do
-					if existing_app == app then
-						app_exists = true
-						break
-					end
-				end
-
-				-- Only add the app if it's not already in the list
-				if not app_exists then
-					table.insert(open_windows[workspace_index], app)
-				end
+				table.insert(raw[ws], { app = entry["app-name"], id = tostring(id), idx = #raw[ws] + 1 })
 			end
 		end
 
-		sbar.exec(get_focus_workspaces, function(focused_workspaces)
-			sbar.exec(query_visible_workspaces, function(visible_workspaces)
-				sbar.exec(get_focused_window, function(focused_window)
-					-- The app owning the currently focused window (used to highlight it)
-					local focused_app = nil
-					if type(focused_window) == "table" and focused_window[1] then
-						focused_app = focused_window[1]["app-name"]
-					end
-					local args = {
-						open_windows = open_windows,
-						focused_workspace = (focused_workspaces or ""):match("^%s*(.-)%s*$"),
-						visible_workspaces = visible_workspaces,
-						focused_app = focused_app,
-					}
-					f(args)
+		sbar.exec(get_positions, function(positions)
+			-- Map window id -> {x, y}; only on-screen windows report real positions
+			local pos = {}
+			if type(positions) == "table" then
+				for _, p in ipairs(positions) do
+					pos[tostring(p.id)] = { x = p.x, y = p.y }
+				end
+			end
+
+			sbar.exec(get_focus_workspaces, function(focused_workspaces)
+				sbar.exec(query_visible_workspaces, function(visible_workspaces)
+					sbar.exec(get_focused_window, function(focused_window)
+						-- The app owning the currently focused window (highlighted red)
+						local focused_app = nil
+						if type(focused_window) == "table" and focused_window[1] then
+							focused_app = focused_window[1]["app-name"]
+						end
+
+						-- Which workspaces are currently on-screen (positions valid)
+						local visible_set = {}
+						for _, v in ipairs(visible_workspaces) do
+							visible_set[v.workspace] = true
+						end
+
+						local open_windows = {}
+						for ws, wins in pairs(raw) do
+							local apps
+							if visible_set[ws] then
+								-- On-screen: order left-to-right (x, then y) to match tiling.
+								table.sort(wins, function(a, b)
+									local pa, pb = pos[a.id], pos[b.id]
+									local ax = pa and pa.x or math.huge
+									local bx = pb and pb.x or math.huge
+									if ax ~= bx then
+										return ax < bx
+									end
+									local ay = pa and pa.y or math.huge
+									local by = pb and pb.y or math.huge
+									if ay ~= by then
+										return ay < by
+									end
+									return a.idx < b.idx
+								end)
+								apps = {}
+								local seen_app = {}
+								for _, win in ipairs(wins) do
+									if not seen_app[win.app] then
+										seen_app[win.app] = true
+										apps[#apps + 1] = win.app
+									end
+								end
+							else
+								-- Hidden: windows are parked off-screen (unreliable positions),
+								-- so keep the order from when it was last visible and just
+								-- reconcile added/removed apps (new ones appended at the end).
+								local current = {}
+								local seen_app = {}
+								for _, win in ipairs(wins) do
+									if not seen_app[win.app] then
+										seen_app[win.app] = true
+										current[#current + 1] = win.app
+									end
+								end
+								local cached = order_cache[ws]
+								if cached then
+									apps = {}
+									local present, placed = {}, {}
+									for _, a in ipairs(current) do
+										present[a] = true
+									end
+									for _, a in ipairs(cached) do
+										if present[a] and not placed[a] then
+											apps[#apps + 1] = a
+											placed[a] = true
+										end
+									end
+									for _, a in ipairs(current) do
+										if not placed[a] then
+											apps[#apps + 1] = a
+											placed[a] = true
+										end
+									end
+								else
+									apps = current
+								end
+							end
+							order_cache[ws] = apps
+							open_windows[ws] = apps
+						end
+
+						local args = {
+							open_windows = open_windows,
+							focused_workspace = (focused_workspaces or ""):match("^%s*(.-)%s*$"),
+							visible_workspaces = visible_workspaces,
+							focused_app = focused_app,
+						}
+						f(args)
+					end)
 				end)
 			end)
 		end)
@@ -331,8 +403,21 @@ sbar.exec(query_workspaces, function(workspaces_and_monitors)
 		updateWindows()
 	end)
 
+	-- Fired instantly by aerospace move/join keybindings (see aerospace.toml)
+	root:subscribe("window_moved", function()
+		updateWindows()
+	end)
+
 	root:subscribe("display_change", function()
 		updateWorkspaceMonitor()
+		updateWindows()
+	end)
+
+	-- aerospace emits no event when a window is moved/reordered within a
+	-- workspace, so poll periodically to keep the icon order in sync with the
+	-- on-screen tiling. Cheap thanks to memoization: unchanged order = no redraw.
+	local poller = sbar.add("item", { drawing = false, updates = true, update_freq = 2 })
+	poller:subscribe("routine", function()
 		updateWindows()
 	end)
 end)
