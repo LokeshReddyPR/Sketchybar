@@ -1,2 +1,6 @@
 require("items.widgets.battery")
 require("items.widgets.volume")
+require("items.widgets.cpu")
+require("items.widgets.ram")
+require("items.widgets.temp")
+require("items.widgets.wifi")

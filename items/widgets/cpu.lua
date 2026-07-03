@@ -1,71 +1,50 @@
-local icons = require("icons")
 local colors = require("appearance").colors
-local settings = require("settings")
 local sbar = require("sketchybar")
 local fonts = require("fonts")
 
--- Execute the event provider binary which provides the event "cpu_update" for
--- the cpu load data, which is fired every 2.0 seconds.
-sbar.exec("killall cpu_load >/dev/null; $CONFIG_DIR/helpers/event_providers/cpu_load/bin/cpu_load cpu_update 2.0")
+-- One provider feeds cpu, ram and temp via the "system_stats" event (every 2s).
+sbar.exec(
+	"killall stats_provider >/dev/null; killall cpu_load >/dev/null; "
+		.. "/opt/homebrew/bin/stats_provider --cpu usage temperature --memory ram_usage --interval 2 --no-units"
+)
 
-local cpu = sbar.add("graph", "widgets.cpu", 42, {
+-- Small sparkline graph on the left, value label on the right, inside a padded
+-- pill (like the battery/volume widgets). The item's own background is the pill.
+local cpu = sbar.add("graph", "widgets.cpu", 28, {
 	position = "right",
 	graph = { color = colors.blue },
 	background = {
-		height = 22,
-		color = { alpha = 0 },
-		border_color = { alpha = 0 },
-		drawing = true,
+		color = colors.bg4,
+		border_color = colors.blue,
+		border_width = 2,
+		corner_radius = 12,
+		height = 24,
 	},
-	icon = { string = icons.cpu },
+	icon = { string = "", padding_left = 12, padding_right = 0 }, -- reserves left padding
 	label = {
-		string = "cpu ??%",
-		font = {
-			family = fonts.font.numbers,
-			style = fonts.font.style_map["Bold"],
-			size = 9.0,
-		},
-		align = "right",
-		padding_right = 0,
-		width = 50,
-		y_offset = 4,
+		string = "cpu …%",
+		font = { family = fonts.font.numbers, style = fonts.font.style_map["Bold"], size = 9.0 },
+		padding_left = 6,
+		padding_right = 12,
 	},
-	padding_right = settings.paddings + 6,
+	padding_left = 3,
+	padding_right = 3,
 })
 
-cpu:subscribe("cpu_update", function(env)
-	-- Also available: env.user_load, env.sys_load
-	local load = tonumber(env.total_load)
-	cpu:push({ load / 100. })
-
+cpu:subscribe("system_stats", function(env)
+	local usage = tonumber(env.CPU_USAGE) or 0
+	cpu:push({ usage / 100.0 })
 	local color = colors.blue
-	if load > 30 then
-		if load < 60 then
-			color = colors.yellow
-		elseif load < 80 then
-			color = colors.orange
-		else
-			color = colors.red
-		end
+	if usage >= 80 then
+		color = colors.red
+	elseif usage >= 60 then
+		color = colors.orange
+	elseif usage >= 30 then
+		color = colors.yellow
 	end
-
-	cpu:set({
-		graph = { color = color },
-		label = "cpu " .. env.total_load .. "%",
-	})
+	cpu:set({ graph = { color = color }, label = { string = "cpu " .. usage .. "%" } })
 end)
 
 cpu:subscribe("mouse.clicked", function()
 	sbar.exec("open -a 'Activity Monitor'")
 end)
-
--- Background around the cpu item
-sbar.add("bracket", "widgets.cpu.bracket", { cpu.name }, {
-	background = { color = colors.bg1 },
-})
-
--- Background around the cpu item
-sbar.add("item", "widgets.cpu.padding", {
-	position = "right",
-	width = settings.group_paddings,
-})
