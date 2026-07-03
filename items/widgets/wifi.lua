@@ -5,9 +5,15 @@ local icons = require("icons")
 
 -- network_load fires "network_update" every 2s with env.upload / env.download
 -- (formatted strings, e.g. "013KBps"; idle numeric value == 0).
-sbar.exec(
-	"killall network_load >/dev/null; $CONFIG_DIR/helpers/event_providers/network_load/bin/network_load en0 network_update 2.0"
-)
+-- Wrapped so it can be restarted after the Mac wakes (the provider is killed
+-- during sleep and would otherwise leave the speeds frozen until a reload).
+local function start_network_load()
+	sbar.exec(
+		"killall network_load >/dev/null; $CONFIG_DIR/helpers/event_providers/network_load/bin/network_load en0 network_update 2.0"
+	)
+end
+
+start_network_load()
 
 local SPEED_FONT = { family = fonts.font.numbers, style = fonts.font.style_map["Bold"], size = 9.0 }
 local ARROW_FONT = { style = fonts.font.style_map["Bold"], size = 9.0 }
@@ -48,6 +54,9 @@ local function open_settings()
 end
 wifi_down:subscribe("mouse.clicked", open_settings)
 wifi_up:subscribe("mouse.clicked", open_settings)
+
+-- Restart the provider after waking from sleep so the speeds don't stay frozen
+wifi_down:subscribe("system_woke", start_network_load)
 
 -- Pill (navy background + blue border) around the stacked speeds
 sbar.add("bracket", "widgets.wifi.bracket", { wifi_up.name, wifi_down.name }, {

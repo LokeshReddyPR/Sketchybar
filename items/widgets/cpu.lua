@@ -3,10 +3,17 @@ local sbar = require("sketchybar")
 local fonts = require("fonts")
 
 -- One provider feeds cpu, ram and temp via the "system_stats" event (every 2s).
-sbar.exec(
-	"killall stats_provider >/dev/null; killall cpu_load >/dev/null; "
-		.. "/opt/homebrew/bin/stats_provider --cpu usage temperature --memory ram_usage --interval 2 --no-units"
-)
+-- Wrapped in a function so it can be restarted after the Mac wakes from sleep
+-- (the provider process is killed during sleep and would otherwise stay dead,
+-- freezing cpu/ram/temp until the next reload).
+local function start_stats_provider()
+	sbar.exec(
+		"killall stats_provider >/dev/null; killall cpu_load >/dev/null; "
+			.. "/opt/homebrew/bin/stats_provider --cpu usage temperature --memory ram_usage --interval 2 --no-units"
+	)
+end
+
+start_stats_provider()
 
 -- Small sparkline graph on the left, value label on the right, inside a padded
 -- pill (like the battery/volume widgets). The item's own background is the pill.
@@ -48,3 +55,6 @@ end)
 cpu:subscribe("mouse.clicked", function()
 	sbar.exec("open -a 'Activity Monitor'")
 end)
+
+-- Restart the provider after waking from sleep so the stats don't stay frozen
+cpu:subscribe("system_woke", start_stats_provider)
