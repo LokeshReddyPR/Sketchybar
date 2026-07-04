@@ -14,6 +14,10 @@ local root = sbar.add("item", { drawing = false })
 
 -- Custom event fired by aerospace move/join keybindings for instant reordering
 sbar.add("event", "window_moved")
+-- Fired when AeroSpace availability flips, so items/apps.lua can swap the
+-- fallback in/out without its own poll.
+sbar.add("event", "aerospace_changed")
+local aerospace_was_up = nil
 
 local numbers = {} -- workspace_index -> number item ("N:")
 local app_pool = {} -- workspace_index -> { app icon item, ... } (fixed pool)
@@ -41,6 +45,32 @@ local function withWindows(f)
 	local get_positions = "$CONFIG_DIR/helpers/window_positions/bin/window_positions"
 
 	sbar.exec(get_windows, function(workspace_and_windows)
+		-- Notify items/apps.lua the moment AeroSpace availability flips, so the
+		-- workspace/fallback swap happens without any extra polling.
+		local up = type(workspace_and_windows) == "table"
+		if up ~= aerospace_was_up then
+			aerospace_was_up = up
+			sbar.trigger("aerospace_changed")
+		end
+
+		-- AeroSpace unavailable (query returned no JSON): hide every workspace
+		-- pill; the aerospace-independent fallback in items/apps.lua takes over.
+		if not up then
+			for ws, number in pairs(numbers) do
+				number:set({ drawing = false })
+				for _, a in ipairs(app_pool[ws]) do
+					a:set({ drawing = false, width = 0 })
+				end
+				brackets[ws]:set({ drawing = false })
+				spacers[ws]:set({ drawing = false, width = 0 })
+				number_state[ws] = "hidden"
+				bracket_state[ws] = false
+				spacer_state[ws] = false
+				app_state[ws] = {}
+			end
+			return
+		end
+
 		-- Collect all unique windows per workspace, preserving discovery order
 		local raw = {} -- workspace -> { { app=, id=, idx= }, ... }
 		local seen_window = {}
@@ -318,11 +348,15 @@ local function updateWorkspaceMonitor()
 	end)
 end
 
-sbar.exec(query_workspaces, function(workspaces_and_monitors)
-	for _, entry in ipairs(workspaces_and_monitors) do
-		local workspace_index = entry.workspace
-		local style = appearance.styles.workspace
+-- Build the items for one workspace. Idempotent: does nothing if they already
+-- exist, so it can be called again when AeroSpace (re)starts.
+local function createWorkspace(workspace_index)
+	if numbers[workspace_index] ~= nil then
+		return
+	end
+	local style = appearance.styles.workspace
 
+	do
 		-- The workspace number ("N:") — always blue, never highlighted
 		local number = sbar.add("item", "workspace." .. workspace_index, {
 			drawing = false,
@@ -390,34 +424,50 @@ sbar.exec(query_workspaces, function(workspaces_and_monitors)
 		spacers[workspace_index] = spacer
 	end
 
-	-- Initial setup
+end
+
+-- Ensure items exist for every current workspace. No-op when AeroSpace is down
+-- (query returns no JSON), so workspaces appear even if SketchyBar loaded before
+-- AeroSpace was ready, and reappear when AeroSpace is re-enabled.
+local function ensureWorkspaceItems(callback)
+	sbar.exec(query_workspaces, function(entries)
+		if type(entries) == "table" then
+			for _, entry in ipairs(entries) do
+				createWorkspace(entry.workspace)
+			end
+		end
+		if callback then
+			callback()
+		end
+	end)
+end
+
+-- Build items when needed (first run, or after AeroSpace restarts), then refresh.
+local function tick()
+	if next(numbers) == nil then
+		ensureWorkspaceItems(updateWindows)
+	else
+		updateWindows()
+	end
+end
+
+-- Initial build + monitor assignment
+ensureWorkspaceItems(function()
 	updateWindows()
 	updateWorkspaceMonitor()
-
-	-- Recolor / reflow whenever the workspace, focused window, or displays change
-	root:subscribe("aerospace_workspace_change", function()
-		updateWindows()
-	end)
-
-	root:subscribe("front_app_switched", function()
-		updateWindows()
-	end)
-
-	-- Fired instantly by aerospace move/join keybindings (see aerospace.toml)
-	root:subscribe("window_moved", function()
-		updateWindows()
-	end)
-
-	root:subscribe("display_change", function()
-		updateWorkspaceMonitor()
-		updateWindows()
-	end)
-
-	-- aerospace emits no event when a window is moved/reordered within a
-	-- workspace, so poll periodically to keep the icon order in sync with the
-	-- on-screen tiling. Cheap thanks to memoization: unchanged order = no redraw.
-	local poller = sbar.add("item", { drawing = false, updates = true, update_freq = 2 })
-	poller:subscribe("routine", function()
-		updateWindows()
-	end)
 end)
+
+-- Recolor / reflow / (re)create on the relevant events
+root:subscribe("aerospace_workspace_change", tick)
+root:subscribe("front_app_switched", tick)
+root:subscribe("window_moved", tick)
+root:subscribe("display_change", function()
+	updateWorkspaceMonitor()
+	tick()
+end)
+
+-- aerospace emits no event when a window is moved/reordered within a workspace,
+-- so poll periodically to keep the icon order in sync (and to pick up AeroSpace
+-- (re)starting). Cheap thanks to memoization: unchanged order = no redraw.
+local poller = sbar.add("item", { drawing = false, updates = true, update_freq = 2 })
+poller:subscribe("routine", tick)
