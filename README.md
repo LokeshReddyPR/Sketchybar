@@ -1,5 +1,4 @@
-# SketchyBar Configuration (Lua + AeroSpace, TokyoNight Night)
-
+# SketchyBar Configuration 
 A dynamic, event-driven [SketchyBar](https://github.com/FelixKratz/SketchyBar) config written in **Lua** (via [SbarLua](https://github.com/FelixKratz/SbarLua)), themed **TokyoNight Night**, and tightly integrated with the [AeroSpace](https://github.com/nikitabobko/AeroSpace) tiling window manager.
 
 A floating, rounded, translucent bar with per-item pills (navy fill + colored borders), fully event-driven.
