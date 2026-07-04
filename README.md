@@ -2,10 +2,21 @@
 
 A dynamic, event-driven [SketchyBar](https://github.com/FelixKratz/SketchyBar) config written in **Lua** (via [SbarLua](https://github.com/FelixKratz/SbarLua)), themed **TokyoNight Night**, and tightly integrated with the [AeroSpace](https://github.com/nikitabobko/AeroSpace) tiling window manager.
 
-**Highlights**
-- Floating, rounded, translucent bar with per-item pills (navy fill + colored borders).
-- AeroSpace workspaces that show **per-app icons**, highlight the **focused window's app**, order icons **left-to-right by on-screen window position**, and re-order **instantly** when you move windows.
-- System widgets: **CPU / RAM / Temp** live graphs (single stats provider), **WiFi** stacked ↓/↑ speeds, **Volume**, **Battery**, **Clock**, plus a **≡ menu** button that shows the focused app's macOS menu bar.
+A floating, rounded, translucent bar with per-item pills (navy fill + colored borders), fully event-driven.
+
+## Features
+
+- **Workspaces (AeroSpace):** Per-workspace pills showing an icon for each open app, with the **active window's app highlighted red**. Icons are ordered **left-to-right to match the on-screen tiling** and **re-order instantly** when you move a window. Empty workspaces hide automatically.
+- **App fallback:** When AeroSpace is disabled or not running, the workspaces auto-swap to a single pill listing your **open apps** with the **active app highlighted** — sourced from native macOS, no AeroSpace required.
+- **CPU:** Live load sparkline + percentage; graph color shifts blue → yellow → orange → red with load. Click → Activity Monitor.
+- **Memory (RAM):** Live memory-usage sparkline + percentage.
+- **Temperature:** Live CPU temperature graph (°C), works on Apple Silicon — all three fed by a single native stats provider.
+- **Wi-Fi:** Stacked ↓ download / ↑ upload throughput, greyed when idle. Click → Wi-Fi settings.
+- **Volume:** Compact percentage + icon.
+- **Battery:** Compact percentage with charging states + time-remaining popup (native helper).
+- **Menus (≡):** Renders the **focused app's macOS menu bar** on click, via a native Accessibility helper.
+- **Clock:** Date + time in a rounded pill.
+- **Resilient:** Providers auto-restart after the Mac wakes from sleep; workspaces rebuild automatically if AeroSpace starts after SketchyBar.
 
 > Everything below is the exact recipe to reproduce this setup on a fresh Apple Silicon Mac.
 
