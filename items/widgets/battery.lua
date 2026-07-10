@@ -87,6 +87,13 @@ battery:subscribe({ "routine", "power_source_change", "system_woke" }, function(
 	end)
 end)
 
+local function battery_hide()
+	battery:set({ popup = { drawing = false } })
+end
+
+-- Guards against a stale auto-close timer dismissing a freshly reopened popup.
+local battery_gen = 0
+
 -- Click handler for popup
 battery:subscribe("mouse.clicked", function()
 	local drawing = battery:query().popup.drawing
@@ -94,9 +101,28 @@ battery:subscribe("mouse.clicked", function()
 
 	if drawing == "off" then
 		sbar.exec("pmset -g batt", function(batt_info)
-			local found, _, remaining = batt_info:find(" (%d+:%d+) remaining")
-			local label = found and remaining .. "h" or "No estimate"
+			-- pmset reports "H:MM remaining"; show it as "4h 32m" (or "45m").
+			local h, m = batt_info:match(" (%d+):(%d+) remaining")
+			local label = "No estimate"
+			if h and m then
+				h = tonumber(h)
+				label = h > 0 and (h .. "h " .. m .. "m") or (tonumber(m) .. "m")
+			end
 			remaining_time:set({ label = { string = label } })
+		end)
+
+		-- SketchyBar's mouse-exit events are unreliable, so guarantee dismissal
+		-- with a timer (sbar.exec runs async; the callback fires after sleep).
+		battery_gen = battery_gen + 1
+		local gen = battery_gen
+		sbar.exec("sleep 5", function()
+			if battery_gen == gen then
+				battery_hide()
+			end
 		end)
 	end
 end)
+
+-- Snappy close when the (flaky) hover-exit events do fire.
+battery:subscribe("mouse.exited", battery_hide)
+battery:subscribe("mouse.exited.global", battery_hide)

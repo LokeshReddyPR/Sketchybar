@@ -101,6 +101,8 @@ local function volume_collapse_details()
 end
 
 local current_audio_device = "None"
+-- Guards against a stale auto-close timer dismissing a freshly reopened popup.
+local volume_gen = 0
 local function volume_toggle_details(env)
 	if env.BUTTON == "right" then
 		sbar.exec("open /System/Library/PreferencePanes/Sound.prefpane")
@@ -110,6 +112,16 @@ local function volume_toggle_details(env)
 	local should_draw = volume_bracket:query().popup.drawing == "off"
 	if should_draw then
 		volume_bracket:set({ popup = { drawing = true } })
+
+		-- SketchyBar's mouse-exit events are unreliable, so guarantee dismissal
+		-- with a timer (sbar.exec runs async; the callback fires after sleep).
+		volume_gen = volume_gen + 1
+		local gen = volume_gen
+		sbar.exec("sleep 5", function()
+			if volume_gen == gen then
+				volume_collapse_details()
+			end
+		end)
 		sbar.exec("SwitchAudioSource -t output -c", function(result)
 			current_audio_device = result:sub(1, -2)
 			sbar.exec("SwitchAudioSource -a -t output", function(available)
@@ -153,6 +165,9 @@ end
 
 volume_icon:subscribe("mouse.clicked", volume_toggle_details)
 volume_icon:subscribe("mouse.scrolled", volume_scroll)
+volume_icon:subscribe("mouse.exited", volume_collapse_details)
+volume_icon:subscribe("mouse.exited.global", volume_collapse_details)
 volume_percent:subscribe("mouse.clicked", volume_toggle_details)
+volume_percent:subscribe("mouse.exited", volume_collapse_details)
 volume_percent:subscribe("mouse.exited.global", volume_collapse_details)
 volume_percent:subscribe("mouse.scrolled", volume_scroll)
